@@ -1,0 +1,58 @@
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List, Dict, Any
+from backend import models, database
+from datetime import datetime, timedelta
+
+# Create tables for dev environment
+models.Base.metadata.create_all(bind=database.engine)
+
+app = FastAPI(
+    title="NCR Fuel Watch API",
+    description="Backend API exposing historical and current fuel prices across Metro Manila.",
+    version="1.0.0"
+)
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "NCR Fuel Watch API is online."}
+
+@app.get("/api/stations")
+def get_stations(city: str = None, brand: str = None, db: Session = Depends(database.get_db)):
+    """Retrieve active fuel stations, optionally filtered by city/brand."""
+    query = db.query(models.Station)
+    if city:
+        query = query.filter(models.Station.city.ilike(f"%{city}%"))
+    if brand:
+        query = query.filter(models.Station.brand.ilike(f"%{brand}%"))
+    return query.all()
+
+@app.get("/api/prices/latest")
+def get_latest_prices(city: str = None, fuel_type: str = None, db: Session = Depends(database.get_db)):
+    """Retrieve the latest prices from the last 7 days for analytical mapping."""
+    query = db.query(models.FuelPrice, models.Station).join(models.Station)
+    
+    if city:
+        query = query.filter(models.Station.city.ilike(f"%{city}%"))
+    if fuel_type:
+        query = query.filter(models.FuelPrice.fuel_type.ilike(f"%{fuel_type}%"))
+        
+    recent_date = datetime.utcnow() - timedelta(days=7)
+    query = query.filter(models.FuelPrice.scraped_at >= recent_date)
+    
+    results = query.all()
+    
+    payload = []
+    for price, station in results:
+        payload.append({
+            "station_id": station.station_id,
+            "brand": station.brand,
+            "city": station.city,
+            "lat": station.latitude,
+            "lon": station.longitude,
+            "fuel_type": price.fuel_type,
+            "price": float(price.price),
+            "reported_at": price.reported_at,
+            "scraped_at": price.scraped_at
+        })
+    return payload
