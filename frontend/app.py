@@ -5,13 +5,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import requests
+import os
 
 # -----------------------------------------------------------------------------
 # Configuration & Setup
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="NCR Fuel Watch", page_icon="⛽", layout="wide")
 
-API_URL = "http://localhost:8000/api"
+# Use environment variable for Cloud deployment, fallback to localhost for local dev
+API_URL = os.getenv("API_URL", "http://localhost:8000/api")
 
 # Inject Custom CSS for Minimalist UI
 st.markdown("""
