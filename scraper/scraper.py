@@ -27,7 +27,16 @@ def scrape_real_fuel_prices():
     
     with sync_playwright() as p:
         logging.info("Bringing up Playwright browser...")
-        browser = p.chromium.launch(headless=True)
+        # Cloud environments (Render/Docker) prohibit Chromium from running without these specific sandbox bypass flags
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ]
+        )
         page = browser.new_page(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         )
