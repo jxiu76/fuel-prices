@@ -20,7 +20,8 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
 engine = create_engine(DATABASE_URL) if DATABASE_URL else None
 SessionLocal = sessionmaker(bind=engine) if engine else None
 
-CITIES = ["makati", "quezon-city", "manila", "caloocan"]
+# List of GasWatchPH city paths to scrape (Focusing on Quezon City to optimize resources)
+CITIES = ["quezon-city"]
 
 def scrape_real_fuel_prices():
     prices_data = []
@@ -51,8 +52,8 @@ def scrape_real_fuel_prices():
                 logging.info(f"Rate Limiting active. Sleeping for {delay:.2f} seconds before parsing...")
                 time.sleep(delay)
                 
-                # Wait for the JS table to inject
-                page.wait_for_selector("table.station-table tbody tr", timeout=15000)
+                # Wait for the JS table to inject (Extended timeout for slow free-tier container)
+                page.wait_for_selector("table.station-table tbody tr", timeout=60000)
                 
                 rows = page.locator("table.station-table tbody tr").all()
                 for row in rows:

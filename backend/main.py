@@ -24,15 +24,24 @@ app = FastAPI(
 def read_root():
     return {"status": "ok", "message": "NCR Fuel Watch API is online."}
 
+from threading import Lock
+
+# Prevent multiple massive browser instances from OOMing the 512MB free tier container
+scrape_lock = Lock()
+
 @app.get("/api/admin/trigger-scrape")
 def trigger_scrape(background_tasks: BackgroundTasks):
     """Bypasses paid Background Workers by running the scraper inside the free Web Service!"""
+    if scrape_lock.locked():
+        return {"message": "Whoops! A live scrape is already actively running right now. Please wait for it to finish so we don't crash the server!"}
+        
     def run_pipeline():
-        try:
-            live_data = scrape_real_fuel_prices()
-            process_and_store(live_data)
-        except Exception as e:
-            logging.error(f"Background scrape failed: {e}")
+        with scrape_lock:
+            try:
+                live_data = scrape_real_fuel_prices()
+                process_and_store(live_data)
+            except Exception as e:
+                logging.error(f"Background scrape failed: {e}")
             
     background_tasks.add_task(run_pipeline)
     return {"message": "Live Data Pipeline successfully triggered natively in the background!"}
