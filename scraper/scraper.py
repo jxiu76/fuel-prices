@@ -60,9 +60,13 @@ def scrape_real_fuel_prices():
                     station_info = row.locator("td div.station-info").inner_text()
                     price_text = row.locator("td.price-col").inner_text()
                     
+                    import re
                     brand = station_info.split(" ")[0].capitalize() 
                     fuel_type = "Diesel" # GasWatch Defaults to Diesel tab on load
-                    price_clean = float(price_text.replace("₱", "").replace(",", "").strip())
+                    
+                    # Robust RegEx to extract only the numeric price, ignoring text like "actual"
+                    price_match = re.search(r"(\d+(?:\.\d+)?)", price_text.replace(",", ""))
+                    price_clean = float(price_match.group(1)) if price_match else 0.0
                     
                     prices_data.append({
                         "brand": brand,
