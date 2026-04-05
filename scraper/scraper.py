@@ -47,7 +47,8 @@ def scrape_real_fuel_prices():
             logging.info(f"Navigating to {url}")
             
             try:
-                page.goto(url, wait_until="networkidle")
+                # Use domcontentloaded instead of networkidle so background analytics/ads don't trigger the 30s timeout
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 delay = random.uniform(2, 5)
                 logging.info(f"Rate Limiting active. Sleeping for {delay:.2f} seconds before parsing...")
                 time.sleep(delay)
