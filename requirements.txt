@@ -9,3 +9,4 @@ requests
 plotly
 python-dotenv
 apscheduler
+playwright
