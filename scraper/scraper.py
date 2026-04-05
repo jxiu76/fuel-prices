@@ -1,64 +1,107 @@
+import os
 import time
 import random
-import requests
 import logging
-from bs4 import BeautifulSoup
 from datetime import datetime
+from playwright.sync_api import sync_playwright
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+# Import our models
+from backend import models
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-GASWATCH_URL = "https://gaswatch.ph/"  # Base URL target
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0"
-]
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-def fetch_fuel_prices():
-    """Scrapes fuel prices from GasWatchPH with rate limiting and ethical access."""
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive",
-    }
+engine = create_engine(DATABASE_URL) if DATABASE_URL else None
+SessionLocal = sessionmaker(bind=engine) if engine else None
+
+CITIES = ["makati", "quezon-city", "manila", "caloocan"]
+
+def scrape_real_fuel_prices():
+    prices_data = []
     
-    # Ethical Access: Rate Limiting
-    delay = random.uniform(3, 7)
-    logging.info(f"Respecting rate limit. Waiting {delay:.2f} seconds before request...")
-    time.sleep(delay)
-    
-    try:
-        logging.info(f"Fetching data from {GASWATCH_URL}...")
+    with sync_playwright() as p:
+        logging.info("Bringing up Playwright browser...")
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        )
         
-        # Uncomment in production to perform real HTTP requests
-        # response = requests.get(GASWATCH_URL, headers=headers, timeout=15)
-        # response.raise_for_status()
-        # soup = BeautifulSoup(response.text, 'html.parser')
+        for city in CITIES:
+            url = f"https://gaswatchph.com/{city}"
+            logging.info(f"Navigating to {url}")
+            
+            try:
+                page.goto(url, wait_until="networkidle")
+                delay = random.uniform(2, 5)
+                logging.info(f"Rate Limiting active. Sleeping for {delay:.2f} seconds before parsing...")
+                time.sleep(delay)
+                
+                # Wait for the JS table to inject
+                page.wait_for_selector("table.station-table tbody tr", timeout=15000)
+                
+                rows = page.locator("table.station-table tbody tr").all()
+                for row in rows:
+                    station_info = row.locator("td div.station-info").inner_text()
+                    price_text = row.locator("td.price-col").inner_text()
+                    
+                    brand = station_info.split(" ")[0].capitalize() 
+                    fuel_type = "Diesel" # GasWatch Defaults to Diesel tab on load
+                    price_clean = float(price_text.replace("₱", "").replace(",", "").strip())
+                    
+                    prices_data.append({
+                        "brand": brand,
+                        "city": city.replace("-", " ").title(),
+                        "fuel_type": fuel_type,
+                        "price": price_clean,
+                        "latitude": 14.6, # Approximate until Geocoded
+                        "longitude": 121.0
+                    })
+            except Exception as e:
+                logging.error(f"Error extracting data for {city}: {e}")
+                
+        browser.close()
         
-        # Note: Actual DOM parsing requires inspecting live GasWatchPH structure
-        # ... logic to parse <div> or <table> goes here ...
+    return prices_data
+
+def process_and_store(data):
+    if not SessionLocal:
+        logging.warning("DATABASE_URL is missing! Printing locally instead of saving:")
+        for r in data: print(r)
+        return
         
-        # Simulated Data Pipeline for downstream development
-        simulated_data = [
-            {"brand": "Shell", "city": "Quezon City", "fuel_type": "Diesel", "price": 54.20, "reported_at": datetime.now()},
-            {"brand": "Petron", "city": "Makati", "fuel_type": "Unleaded 91", "price": 60.10, "reported_at": datetime.now()},
-            {"brand": "Caltex", "city": "Manila", "fuel_type": "Premium 95", "price": 62.50, "reported_at": datetime.now()}
-        ]
+    db = SessionLocal()
+    count = 0
+    logging.info("Uploading fresh data to PostgreSQL...")
+    for record in data:
+        station_q = db.query(models.Station).filter(
+            models.Station.brand == record["brand"],
+            models.Station.city == record["city"]
+        ).first()
         
-        logging.info(f"Successfully simulated scraping of {len(simulated_data)} station records.")
-        return simulated_data
+        if not station_q:
+            station_q = models.Station(brand=record["brand"], city=record["city"], latitude=record["latitude"], longitude=record["longitude"])
+            db.add(station_q)
+            db.flush()
+            
+        fuel_price = models.FuelPrice(
+            station_id=station_q.station_id,
+            fuel_type=record["fuel_type"],
+            price=record["price"],
+            reported_at=datetime.utcnow()
+        )
+        db.add(fuel_price)
+        count += 1
         
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Network error while scraping: {e}")
-        return []
-    except Exception as e:
-        logging.error(f"Unexpected error: {e}")
-        return []
+    db.commit()
+    logging.info(f"✅ Successfully inserted {count} LIVE price records into the database.")
 
 if __name__ == "__main__":
-    data = fetch_fuel_prices()
-    print("Sample Scraped Output:")
-    for record in data:
-        print(record)
+    logging.info("Initiating Live Data Pipeline Scrape...")
+    live_data = scrape_real_fuel_prices()
+    process_and_store(live_data)
