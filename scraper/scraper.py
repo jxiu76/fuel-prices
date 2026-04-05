@@ -56,6 +56,18 @@ def scrape_real_fuel_prices():
                 # Wait for the JS table to inject (Extended timeout for slow free-tier container)
                 page.wait_for_selector("table.station-table tbody tr", timeout=60000)
                 
+                # Automatically click "Show all 239 stations..." to unlock massive dataset!
+                try:
+                    expand_buttons = page.get_by_text("Show all", exact=False).all()
+                    for btn in expand_buttons:
+                        if btn.is_visible():
+                            logging.info("Found 'Show all stations' button! Clicking to unleash data...")
+                            btn.click()
+                            time.sleep(4) # Wait briefly for the DOM to inject all 200+ rows
+                            break
+                except Exception as btn_err:
+                    logging.warning(f"Could not interact with 'Show all' button (It might not exist here): {btn_err}")
+                
                 rows = page.locator("table.station-table tbody tr").all()
                 for row in rows:
                     station_info = row.locator("td div.station-info").inner_text()
