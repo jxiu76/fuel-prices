@@ -1,8 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from backend import models, database
 from datetime import datetime, timedelta
+import logging
+
+# Import scraper for free-tier integration
+try:
+    from scraper.scraper import scrape_real_fuel_prices, process_and_store
+except ImportError:
+    logging.warning("Scraper module not found or missing dependencies.")
 
 # Create tables for dev environment
 models.Base.metadata.create_all(bind=database.engine)
@@ -16,6 +23,19 @@ app = FastAPI(
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "NCR Fuel Watch API is online."}
+
+@app.get("/api/admin/trigger-scrape")
+def trigger_scrape(background_tasks: BackgroundTasks):
+    """Bypasses paid Background Workers by running the scraper inside the free Web Service!"""
+    def run_pipeline():
+        try:
+            live_data = scrape_real_fuel_prices()
+            process_and_store(live_data)
+        except Exception as e:
+            logging.error(f"Background scrape failed: {e}")
+            
+    background_tasks.add_task(run_pipeline)
+    return {"message": "Live Data Pipeline successfully triggered natively in the background!"}
 
 @app.get("/api/stations")
 def get_stations(city: str = None, brand: str = None, db: Session = Depends(database.get_db)):
